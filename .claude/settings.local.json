@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(git clone *)",
+      "Bash(conda *)",
+      "Bash(nvidia-smi *)",
+      "Bash(pip --version)",
+      "Bash(pip install *)",
+      "Bash(pip uninstall *)",
+      "Bash(pip config *)",
+      "Bash(set)",
+      "Bash(netsh winhttp *)",
+      "Bash(python *)",
+      "Bash(start *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://127.0.0.1:7860)",
+      "Bash(cmd *)",
+      "Bash(netstat -ano)",
+      "Bash(taskkill //pid 69180 //f)",
+      "Bash(awk '{print $5}')",
+      "Bash(taskkill //pid 63988 //f)",
+      "Bash(git remote *)",
+      "Bash(git add *)"
+    ]
+  }
+}
