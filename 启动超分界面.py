@@ -1,4 +1,4 @@
-"""Real-ESRGAN 图像超分辨率 - 双击启动 Web UI."""
+"""基于CNN的图像超分系统 - 双击启动 Web UI."""
 import argparse
 import os
 import shutil
@@ -45,7 +45,7 @@ def relaunch_in_venv() -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="启动 Real-ESRGAN Web UI")
+    parser = argparse.ArgumentParser(description="启动基于CNN的图像超分系统 Web UI")
     parser.add_argument("--host", default=os.environ.get("GRADIO_SERVER_NAME", DEFAULT_HOST))
     parser.add_argument(
         "--port",
@@ -143,7 +143,7 @@ def run_gradio(args: argparse.Namespace, port: int) -> None:
 
     import app
 
-    print("启动 Real-ESRGAN Gradio Web UI...")
+    print("启动基于CNN的图像超分系统 (Gradio)...")
     print("访问地址: http://{}:{}".format(args.host, port))
     app.demo.launch(
         server_name=args.host,
@@ -165,7 +165,7 @@ def run_vue(args: argparse.Namespace, port: int) -> None:
     import vue_server
 
     url = "http://{}:{}".format(args.host, port)
-    print("启动 Real-ESRGAN Vue Web UI...")
+    print("启动基于CNN的图像超分系统 (Vue)...")
     print("访问地址: {}".format(url))
     if not args.no_browser:
         open_browser_later(url)

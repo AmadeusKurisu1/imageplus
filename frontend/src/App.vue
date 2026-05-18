@@ -57,11 +57,6 @@
           <h1>{{ pageMeta.title }}</h1>
           <p>{{ pageMeta.description }}</p>
         </div>
-        <div class="runtime">
-          <span>{{ health?.device?.label || "检测中" }}</span>
-          <span>PyTorch {{ health?.torch || "-" }}</span>
-          <span>CUDA {{ health?.cuda || "N/A" }}</span>
-        </div>
       </header>
 
       <div class="mobile-pages" role="tablist" aria-label="页面切换">
@@ -76,11 +71,12 @@
         </button>
       </div>
 
-      <div v-if="activePage === 'workspace'" class="content-grid">
+      <div v-if="activePage === 'workspace'" class="content-grid" :class="{ 'split-mode': viewMode === 'split' && previewUrl && resultUrl }">
         <section class="canvas-area">
           <div class="toolbar">
             <div class="segmented" role="tablist" aria-label="查看模式">
               <button :class="{ active: viewMode === 'compare' }" type="button" @click="viewMode = 'compare'">对比</button>
+              <button :class="{ active: viewMode === 'split' }" type="button" @click="viewMode = 'split'" :disabled="!previewUrl || !resultUrl">滑块</button>
               <button :class="{ active: viewMode === 'input' }" type="button" @click="viewMode = 'input'">原图</button>
               <button :class="{ active: viewMode === 'output' }" type="button" @click="viewMode = 'output'">结果</button>
             </div>
@@ -125,9 +121,23 @@
             </article>
           </div>
 
+          <div v-if="viewMode === 'split' && previewUrl && resultUrl" class="split-view" @mousedown.prevent="startSplitDrag" @touchstart.prevent="startSplitDrag">
+            <div class="split-container" ref="splitContainer">
+              <img :src="resultUrl" class="split-under" alt="增强结果" />
+              <div class="split-over" :style="{ clipPath: `inset(0 ${100 - splitPosition}% 0 0)` }">
+                <img :src="previewUrl" alt="原图" />
+              </div>
+              <div class="split-handle" :style="{ left: splitPosition + '%' }">
+                <div class="split-handle-line"></div>
+              </div>
+              <span class="split-label split-label-left">原图</span>
+              <span class="split-label split-label-right">增强结果</span>
+            </div>
+          </div>
+
           <div class="status-strip" :class="{ error: statusKind === 'error', success: statusKind === 'success' }">
             <span>{{ statusText }}</span>
-            <span v-if="processing" class="pulse">模型推理中</span>
+            <span v-if="processing" class="pulse">处理中 {{ elapsedSeconds }}s</span>
           </div>
 
           <section class="history-strip" aria-label="任务记录">
@@ -160,7 +170,11 @@
           <div class="model-note">
             <strong>{{ selectedModel?.title || "模型" }}</strong>
             <p>{{ selectedModel?.description || "加载模型信息中。" }}</p>
-            <small>{{ selectedModel?.arch || "-" }} · 标称 {{ selectedModel?.scale || "-" }}x · {{ selectedModel?.supports_denoise ? "支持降噪" : "固定权重" }}</small>
+            <small>
+              {{ selectedModel?.arch || "-" }} · 输出 {{ settings.outscale }}x
+              <template v-if="settings.outscale !== selectedModel?.scale">（模型标称 {{ selectedModel?.scale }}x，自动适配）</template>
+              · {{ selectedModel?.supports_denoise ? "支持降噪" : "固定权重" }}
+            </small>
           </div>
 
           <label class="field">
@@ -273,14 +287,14 @@
         <div class="page-header">
           <div>
             <h2>任务记录</h2>
-            <p>保留本次会话内完成的超分结果，方便回看和下载。</p>
+            <p>历史处理记录自动保存，刷新页面不丢失。</p>
           </div>
           <button class="small-button" type="button" :disabled="jobs.length === 0" @click="clearJobs">清空记录</button>
         </div>
 
         <div v-if="jobs.length === 0" class="empty-state">
           <strong>还没有任务</strong>
-          <span>回到工作台上传图片并完成一次超分后，这里会出现结果记录。</span>
+          <span>回到工作台上传图片并完成一次超分后，这里会出现结果记录，刷新页面不会丢失。</span>
           <button class="secondary-button" type="button" @click="activePage = 'workspace'">去工作台</button>
         </div>
 
@@ -307,14 +321,28 @@
       <div class="lightbox-toolbar">
         <span>{{ viewerTitle }}</span>
         <div>
-          <button type="button" @click="setViewerZoom(zoom - 0.25)">-</button>
-          <button type="button" @click="setViewerZoom(1)">{{ Math.round(zoom * 100) }}%</button>
-          <button type="button" @click="setViewerZoom(zoom + 0.25)">+</button>
+          <button type="button" @click="viewerZoomAt(zoom - 0.5)">-</button>
+          <button type="button" @click="viewerZoomAt(1)">{{ Math.round(zoom * 100) }}%</button>
+          <button type="button" @click="viewerZoomAt(zoom + 0.5)">+</button>
+          <button type="button" @click="resetViewer">重置</button>
           <button type="button" @click="closeViewer">关闭</button>
         </div>
       </div>
-      <div class="lightbox-canvas" title="滚轮缩放" @wheel="handleViewerWheel">
-        <img :src="viewerUrl" :style="{ transform: `scale(${zoom})` }" alt="放大查看" />
+      <div
+        class="lightbox-canvas"
+        :class="{ grabbing: viewerPanning }"
+        @wheel.prevent="handleViewerWheel"
+        @mousedown="startViewerPan"
+        @mousemove="onViewerPan"
+        @mouseup="stopViewerPan"
+        @mouseleave="stopViewerPan"
+      >
+        <img
+          :src="viewerUrl"
+          :style="{ transform: `translate(${offsetX}px, ${offsetY}px) scale(${zoom})` }"
+          :draggable="false"
+          alt="放大查看"
+        />
       </div>
     </div>
 
@@ -323,9 +351,10 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 
 const fileInput = ref(null);
+const splitContainer = ref(null);
 const selectedFile = ref(null);
 const previewUrl = ref("");
 const resultUrl = ref("");
@@ -341,25 +370,63 @@ const viewMode = ref("compare");
 const viewerUrl = ref("");
 const viewerTitle = ref("图片查看");
 const zoom = ref(1);
+const offsetX = ref(0);
+const offsetY = ref(0);
+const viewerPanning = ref(false);
+const panLastX = ref(0);
+const panLastY = ref(0);
+const splitPosition = ref(50);
+const isDragging = ref(false);
+const elapsedSeconds = ref(0);
+let elapsedTimer = null;
+
+const HISTORY_KEY = "imageplus_jobs";
+const MAX_HISTORY = 12;
+
+function handlePaste(event) {
+  const items = event.clipboardData?.items;
+  if (!items) return;
+  for (const item of items) {
+    if (item.type.startsWith("image/")) {
+      event.preventDefault();
+      const file = item.getAsFile();
+      if (file) acceptFile(file);
+      return;
+    }
+  }
+}
+
+function saveJobs() {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(jobs.value));
+  } catch { /* storage full, ignore */ }
+}
+
+function loadJobs() {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    if (raw) jobs.value = JSON.parse(raw);
+  } catch { /* corrupt data, ignore */ }
+}
 
 const pages = [
   {
     id: "workspace",
     short: "工作台",
-    title: "Real-ESRGAN Studio",
-    description: "本地图像超分工作台，保留 Real-ESRGAN 推理，换成 Vue 产品界面。",
+    title: "基于CNN的图像超分系统",
+    description: "上传图片，一键提升分辨率和画质。",
   },
   {
     id: "models",
     short: "模型",
     title: "模型管理",
-    description: "检查模型权重状态，选择合适的 Real-ESRGAN 模型。",
+    description: "查看可用的超分模型，权重文件按需自动下载。",
   },
   {
     id: "jobs",
     short: "任务",
     title: "任务记录",
-    description: "查看本次会话的超分结果，快速回到输出图和下载文件。",
+    description: "历史处理记录自动保存，刷新页面不丢失，随时回看或下载结果。",
   },
 ];
 
@@ -385,6 +452,19 @@ const deviceShortLabel = computed(() => {
   if (type === "cuda") return "CUDA";
   return "CPU";
 });
+
+function translateError(message) {
+  const patterns = [
+    [/PytorchStreamReader|failed (reading|finding).*zip archive/i, "模型权重文件已损坏或下载不完整，请删除 weights 目录下对应 .pth 文件后重试。"],
+    [/out of memory/i, "显存不足，请将分块大小设为 256 或 128 后重试。"],
+    [/Failed to fetch|NetworkError|ECONNREFUSED|connect/i, "无法连接后端服务，请确认服务已启动。"],
+    [/crypto\.hash is not a function/i, "前端构建版本不兼容，请升级 Node.js 到 20.19 以上。"],
+  ];
+  for (const [pattern, translation] of patterns) {
+    if (pattern.test(message)) return translation;
+  }
+  return `处理失败: ${message}`;
+}
 
 function objectUrl(file) {
   if (previewUrl.value) URL.revokeObjectURL(previewUrl.value);
@@ -438,6 +518,8 @@ async function runEnhance() {
   processing.value = true;
   statusKind.value = "idle";
   statusText.value = "正在准备模型并执行超分...";
+  elapsedSeconds.value = 0;
+  elapsedTimer = setInterval(() => { elapsedSeconds.value++; }, 1000);
   const form = new FormData();
   form.append("image", selectedFile.value);
   Object.entries(settings).forEach(([key, value]) => form.append(key, value));
@@ -467,21 +549,24 @@ async function runEnhance() {
       fileName: selectedFile.value?.name || "上传图片",
       url: payload.url,
     });
-    jobs.value = jobs.value.slice(0, 6);
+    jobs.value = jobs.value.slice(0, MAX_HISTORY);
   } catch (error) {
-    statusText.value = error.message;
+    statusText.value = translateError(error.message);
     statusKind.value = "error";
   } finally {
+    clearInterval(elapsedTimer);
     processing.value = false;
   }
 }
 
 function clearAll() {
+  if (elapsedTimer) clearInterval(elapsedTimer);
   selectedFile.value = null;
   if (previewUrl.value) URL.revokeObjectURL(previewUrl.value);
   previewUrl.value = "";
   resultUrl.value = "";
   resultMeta.value = "";
+  splitPosition.value = 50;
   statusKind.value = "idle";
   statusText.value = "已清空。拖入图片即可开始。";
   if (fileInput.value) fileInput.value.value = "";
@@ -498,17 +583,50 @@ function restoreJob(job) {
 
 function clearJobs() {
   jobs.value = [];
+  try { localStorage.removeItem(HISTORY_KEY); } catch { /* ignore */ }
 }
 
-function setViewerZoom(value) {
-  zoom.value = Math.min(6, Math.max(0.25, Number(value.toFixed(2))));
+function viewerZoomAt(newZoom) {
+  zoom.value = Math.min(6, Math.max(0.5, Number(newZoom.toFixed(2))));
+}
+
+function resetViewer() {
+  zoom.value = 1;
+  offsetX.value = 0;
+  offsetY.value = 0;
 }
 
 function handleViewerWheel(event) {
-  event.preventDefault();
+  const rect = event.currentTarget.getBoundingClientRect();
+  const cx = event.clientX - rect.left - rect.width / 2;
+  const cy = event.clientY - rect.top - rect.height / 2;
   const direction = event.deltaY < 0 ? 1 : -1;
-  const step = event.altKey ? 0.1 : 0.2;
-  setViewerZoom(zoom.value + direction * step);
+  const step = event.altKey ? 0.1 : 0.25;
+  const oldZoom = zoom.value;
+  const newZoom = Math.min(6, Math.max(0.5, oldZoom + direction * step));
+  const ratio = newZoom / oldZoom;
+  offsetX.value = offsetX.value - cx * (ratio - 1);
+  offsetY.value = offsetY.value - cy * (ratio - 1);
+  zoom.value = newZoom;
+}
+
+function startViewerPan(event) {
+  if (zoom.value <= 1) return;
+  viewerPanning.value = true;
+  panLastX.value = event.clientX;
+  panLastY.value = event.clientY;
+}
+
+function onViewerPan(event) {
+  if (!viewerPanning.value) return;
+  offsetX.value += event.clientX - panLastX.value;
+  offsetY.value += event.clientY - panLastY.value;
+  panLastX.value = event.clientX;
+  panLastY.value = event.clientY;
+}
+
+function stopViewerPan() {
+  viewerPanning.value = false;
 }
 
 function openViewer(url) {
@@ -516,16 +634,55 @@ function openViewer(url) {
   viewerUrl.value = url;
   viewerTitle.value = url === resultUrl.value ? "增强结果" : "原图";
   zoom.value = 1;
+  offsetX.value = 0;
+  offsetY.value = 0;
+  document.addEventListener("keydown", onViewerKeydown);
 }
 
 function closeViewer() {
   viewerUrl.value = "";
+  document.removeEventListener("keydown", onViewerKeydown);
+}
+
+function onViewerKeydown(event) {
+  if (event.key === "Escape") closeViewer();
+}
+
+function startSplitDrag() {
+  isDragging.value = true;
+  document.addEventListener("mousemove", onSplitDrag);
+  document.addEventListener("mouseup", stopSplitDrag);
+  document.addEventListener("touchmove", onSplitDrag, { passive: false });
+  document.addEventListener("touchend", stopSplitDrag);
+}
+
+function onSplitDrag(event) {
+  if (!isDragging.value || !splitContainer.value) return;
+  event.preventDefault();
+  const rect = splitContainer.value.getBoundingClientRect();
+  const x = event.touches ? event.touches[0].clientX : event.clientX;
+  splitPosition.value = Math.max(2, Math.min(98, ((x - rect.left) / rect.width) * 100));
+}
+
+function stopSplitDrag() {
+  isDragging.value = false;
+  document.removeEventListener("mousemove", onSplitDrag);
+  document.removeEventListener("mouseup", stopSplitDrag);
+  document.removeEventListener("touchmove", onSplitDrag);
+  document.removeEventListener("touchend", stopSplitDrag);
 }
 
 onMounted(() => {
+  loadJobs();
+  document.addEventListener("paste", handlePaste);
+  watch(jobs, saveJobs, { deep: true });
   refreshHealth().catch((error) => {
     statusKind.value = "error";
     statusText.value = `后端连接失败: ${error.message}`;
   });
+});
+
+onUnmounted(() => {
+  document.removeEventListener("paste", handlePaste);
 });
 </script>

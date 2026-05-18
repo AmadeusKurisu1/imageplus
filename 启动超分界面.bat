@@ -1,9 +1,9 @@
 @echo off
 chcp 65001 >nul
-title Real-ESRGAN 图像超分辨率
+title 基于CNN的图像超分系统
 cd /d "%~dp0"
 echo ========================================
-echo   Real-ESRGAN 图像超分辨率
+echo   基于CNN的图像超分系统
 echo   启动中...
 echo ========================================
 echo.
