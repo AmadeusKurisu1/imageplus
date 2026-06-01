@@ -215,7 +215,8 @@ class SwinIRUpsampler:
             alpha = img[:, :, 3]
             img = img[:, :, 0:3]
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            alpha = cv2.cvtColor(alpha, cv2.COLOR_GRAY2RGB)
+            if alpha_upsampler == "realesrgan":
+                alpha = cv2.cvtColor(alpha, cv2.COLOR_GRAY2RGB)
         else:
             img_mode = "RGB"
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
